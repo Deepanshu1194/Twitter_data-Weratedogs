@@ -1,0 +1,382 @@
+## Gather data from 3 different source
+- Download the file from twitter archive and read it in pandas
+- Download as image_prediction_tsv using request library from url: https://d17h27t6h515a5.cloudfront.net/topher/2017/August/599fd2ad_image-predictions/image-predictions.tsv
+- Gather data from twitter account we rate dogs by using Tweepy library in json as tweet_json.text
+
+#### install tweepy library
+!pip install -U tweepy==4.0
+
+#### Importing libraries
+import pandas as pd
+import tweepy
+import requests
+import numpy as np
+import json
+
+# Reading archived csv file downloaded from Udacity page
+df_archive = pd.read_csv("twitter-archive-enhanced.csv")
+df_archive.head()
+
+# Gathering data from the url and saving the file as tsv
+url = "https://d17h27t6h515a5.cloudfront.net/topher/2017/August/599fd2ad_image-predictions/image-predictions.tsv"
+response = requests.get(url)
+with open("image_prediction.tsv", mode = "wb" ) as file:
+    file.write(response.content)
+    
+# Reading the tsv file extracted above in pandas dataframe
+df_image = pd.read_csv("image_prediction.tsv", sep="\t")
+df_image.head()
+
+# Changing the file into data frame so that we can join the file later on
+df = pd.DataFrame(df_image)
+
+tweet_ids = df_archive.tweet_id.values
+len(tweet_ids)
+%%time
+
+import json
+
+# Query Twitter's API for JSON data for each tweet ID in the Twitter archive
+count = 0
+fails_dict = {}
+# Save each tweet's returned JSON as a new line in a .txt file
+with open("tweet_json.txt", "w") as outfile:
+   
+    for tweet_id in tweet_ids:
+        count += 1
+        print(str(count) + ": " + str(tweet_id))
+        try:
+            tweet = api.get_status(tweet_id, tweet_mode="extended")
+            json.dump(tweet._json, outfile)
+            print("Success")
+            outfile.write('\n')
+        except Exception as e:
+            print("Fail")
+            fails_dict[tweet_id] = e
+        
+
+print(fails_dict)
+
+# Making accesible the file downloaded from twitter into readable json format
+json_df = pd.read_json("tweet_json.txt", lines=True, encoding= "utf-8")
+json_df = json_df.rename(columns={"id": "tweet_id"})
+json_df = json_df[["tweet_id", "retweet_count", "favorite_count"]]
+json_df
+
+### Now we have all three files gathered from various source namely
+- twitter-archive-enhanced.csv as df_archive
+- image_prediction.tsv as df_image
+- tweet_json.txt as json_df
+
+#### Now I have to join all these tables 
+- The left join will work to gather all the data from the tables on "tweet_id" as a common column as joining point.
+# Joining the data through left join on tweet_id 
+twitter_data = pd.merge(df_archive, json_df, how="left", on= "tweet_id")
+twitter_data = twitter_data.merge(df_image, how="left", on="tweet_id")
+twitter_data.head()
+
+## Accessing the data
+pd.set_option('display.max_columns', 600)
+pd.set_option('max_colwidth', 800)
+twitter_data
+twitter_data.info()
+twitter_data.tail(30)
+twitter_data.value_counts("source")
+
+twitter_data.value_counts("name")
+twitter_data.value_counts("retweet_count")
+twitter_data.value_counts("p3")
+twitter_data.sample(20)
+
+
+### Quality Issue
+- Stripping off +0000 and the time(I don't think I need it) from the timestamp, retweeted_status_timestamp column
+- Changing timestamp column from object to the datetime format
+- remove extra characters from the source column, just want the url
+- stripping off the rating and the url from the text column
+- removing duplicate url in the same row no. 4 (there are multiple rows) of expanded url column
+- changing the format of retweet_count favorite_count & img_num column from float to integer
+- incorrect and missing dogs name in the name column
+- Change the format of in_reply_to_status_id, in_reply_to_user_id, retweeted_status_id, retweeted_status_user_id from float to integer as there are exponential numbers in the columns
+- Keep an eye on favorite_count column, there are few rows with 0 value
+- Missing data- retweet_count, favorite_count has 31 missing values, jpg_url has 281 missing values.
+- Check for expanded_urls, value_count is 2218 while info is showing 2297 rows
+- Replace None with NaN in the name of dog, doggo, floofer, pupper, puppo column
+- Replace 0.0 with NaN in favorite_count column
+- Capitalize first alphabet on each column of p1, p2, p3
+- There are some rows with different denominater value, make it constant equals to 10
+
+### Tidiness Issue
+
+- Make 2 columns for text, where one is just clean text and other column for a  url in that text 
+- Remove img_num column as it doesn't make sense as of now
+- Check all the urls, those which are repeated or doesn't make sense, we can remove it
+- Combine doggo, floofer, pupper, puppo into 1 column
+
+## Cleaning the Data
+### Quality Issue
+# Make a copy of data set
+twitter_clean_data = twitter_data.copy()
+#### Define:
+- Stripping off time from timestamp and retweeted_status_timestamp column.
+- Using strftime function, strip of extra time format and just add date in these columns
+
+##### Code:
+twitter_clean_data["timestamp"] = pd.to_datetime(twitter_clean_data["timestamp"], errors='coerce')
+twitter_clean_data["retweeted_status_timestamp"] = pd.to_datetime(twitter_clean_data["retweeted_status_timestamp"], errors='coerce')
+from datetime import datetime
+twitter_clean_data["timestamp"]= twitter_clean_data["timestamp"].dt.strftime( '%Y-%m-%d')
+twitter_clean_data["retweeted_status_timestamp"]= twitter_clean_data["retweeted_status_timestamp"].dt.strftime( '%Y-%m-%d')
+##### Test
+twitter_clean_data[["timestamp" ,"retweeted_status_timestamp"]].sample(10)
+
+#### Define:
+- Removing extra chars from the text by using split and regex function 
+
+##### Code:
+twitter_clean_data["text"] = twitter_clean_data["text"].str.split("\d+/").str[0]
+##### Test
+twitter_clean_data["text"].sample(10)
+
+#### Define:
+- Removing duplicate url in the same column by using split function 
+
+##### Code:
+twitter_clean_data["expanded_urls"] = twitter_clean_data["expanded_urls"].str.split("," ).str[0]
+##### Test
+twitter_clean_data["expanded_urls"].sample(10)
+
+#### Define:
+- changing the format of retweet_count favorite_count & img_num column from float to integer
+- changing the format of in_reply_to_status_id, in_reply_to_user_id, retweeted_status_id, retweeted_status_user_id column from float to integer
+- Fill the NaN values with '0', then convert into integer format 
+##### Code:
+twitter_clean_data["retweet_count"] = twitter_clean_data['retweet_count'].fillna(0).apply(int)
+twitter_clean_data["favorite_count"] = twitter_clean_data["favorite_count"].fillna(0).apply(int)
+twitter_clean_data["img_num"] = twitter_clean_data["img_num"].fillna(0).apply(int)
+twitter_clean_data["retweeted_status_timestamp"]= twitter_clean_data["retweeted_status_timestamp"].fillna(0)
+twitter_clean_data["in_reply_to_status_id"] = twitter_clean_data['in_reply_to_status_id'].fillna(0).apply(int)
+twitter_clean_data["in_reply_to_user_id"] = twitter_clean_data['in_reply_to_user_id'].fillna(0).apply(int)
+twitter_clean_data["retweeted_status_id"] = twitter_clean_data['retweeted_status_id'].fillna(0).apply(int)
+twitter_clean_data["retweeted_status_user_id"] = twitter_clean_data['retweeted_status_user_id'].fillna(0).apply(int)
+##### Test
+twitter_clean_data.info()
+twitter_clean_data[["retweet_count","favorite_count", "retweeted_status_id"]].sample(10)
+
+#### Define:
+- Capitalize first letter of names in p1,p2,p3  using string.capitalize()
+
+##### Code:
+twitter_clean_data["p1"] = twitter_clean_data["p1"].str.capitalize()
+twitter_clean_data["p2"] = twitter_clean_data["p2"].str.capitalize()
+twitter_clean_data["p3"] = twitter_clean_data["p3"].str.capitalize()                   
+##### Test
+twitter_clean_data[["p1","p2","p3"]].sample(10)
+
+#### Define:
+- Round off p1_config, p2_config, p3_config to 1 decimal point
+
+##### Code:
+twitter_clean_data["p1_conf"] = round(twitter_clean_data["p1_conf"],2)
+twitter_clean_data["p2_conf"] = round(twitter_clean_data["p2_conf"],2)
+twitter_clean_data["p3_conf"] = round(twitter_clean_data["p3_conf"],2)
+##### Test
+twitter_clean_data[["p1_conf","p2_conf","p3_conf"]].sample(10)
+
+#### Define:
+- Check the names of dogs in the name, doggo, floofer, pupper, puppo column and replace None and other non_name to blank space using replace function (needed for cleaning in tidiness issue)
+- But I can't change the names of the dog in the name column with wrong names eg. a, not (these are not names just random alphabets)
+
+##### Code:
+twitter_clean_data["name"] = twitter_clean_data["name"].replace(to_replace=["None"], value="")
+twitter_clean_data["doggo"] = twitter_clean_data["doggo"].replace(to_replace=["None"], value="")
+twitter_clean_data["pupper"] = twitter_clean_data["pupper"].replace(to_replace=["None"], value="")
+twitter_clean_data["floofer"] = twitter_clean_data["floofer"].replace(to_replace=["None"], value="")
+twitter_clean_data["puppo"] = twitter_clean_data["puppo"].replace(to_replace=["None"], value="")
+##### Test
+twitter_clean_data[["name","doggo","pupper","floofer","puppo"]].sample(10)
+
+#### Define:
+- There are some rows with different denominater value, make it constant equals to 10 by using apply method
+
+##### Code:
+twitter_clean_data["rating_denominator"] = twitter_clean_data["rating_denominator"].apply(lambda x: 10)
+##### Test
+twitter_clean_data["rating_denominator"].value_counts()
+
+### Tidiness Issue
+
+#### Define:
+- Remove img_num column by using drop function
+
+##### Code:
+twitter_clean_data = twitter_clean_data.drop(columns=["img_num"])
+
+##### Test
+twitter_clean_data.info()
+
+#### Define:
+- Join the doggo, floofer, pupper, puppo columns into a new column name called dog_name using join method 
+- Then replace the blank space with Nan
+
+##### Code:
+# Combining all rows 
+twitter_clean_data["dog_size"] = twitter_clean_data[["doggo", "floofer", "pupper", "puppo"]].apply(lambda row: "".join(row.astype(str)), axis=1)
+# Replacing blank space with Nan
+twitter_clean_data["dog_size"] = twitter_clean_data["dog_size"].replace(to_replace=[""], value=np.nan)
+twitter_clean_data["name"] = twitter_clean_data["name"].replace(to_replace=[""], value=np.nan)
+##### Test
+twitter_clean_data["dog_size"].sample(10)
+
+## Storing the data
+- Store the data in csv file as "twitter_archive_master.csv"
+twitter_clean_data.to_csv("twitter_archive_master.csv", index=False)
+twitter_archive_master = pd.read_csv("twitter_archive_master.csv")
+twitter_archive_master.head()
+
+## Analysis
+
+### Insight #1
+- Calculating the percent of top breeds of dog in each columns of p1, p2, p3
+
+# Check the top breeds of dog in each p1, p2, p3
+twitter_archive_master[["p1","p2","p3"]].describe()
+
+# No. of top dog breeds in each p1, p2, p3 column
+dog_breed_1= twitter_archive_master["p1"].value_counts()["Golden_retriever"]
+dog_breed_2= twitter_archive_master["p2"].value_counts()["Labrador_retriever"]
+dog_breed_3= twitter_archive_master["p3"].value_counts()["Labrador_retriever"]
+print(dog_breed_1,dog_breed_2,dog_breed_3)
+
+# Total number of non_null values
+p1_count=twitter_archive_master["p1"].count()
+p2_count=twitter_archive_master["p2"].count()
+p3_count=twitter_archive_master["p3"].count()
+print(p1_count,p2_count,p3_count)
+# percent of dog breeds
+
+df_percent_p1 = dog_breed_1/p1_count
+df_percent_p2 = dog_breed_2/p2_count
+df_percent_p3 = dog_breed_3/p3_count
+print(f"The total percent of Golden Retreiver in p1 is: {round(df_percent_p1,2)}\n"
+     f"The total percent of Labrador Retriever in p2 is: {round(df_percent_p2,2)}\n"
+     f"The total percent of Labrador Retriever in p3 is: {round(df_percent_p3,2)}")
+     
+### Insight #2
+- Calculating the most favorite count
+most_liked = twitter_archive_master['favorite_count'].idxmax()
+
+# Select the rows of interest using the index
+selected_rows = twitter_archive_master.loc[most_liked, ["favorite_count","tweet_id", "expanded_urls", "jpg_url", "rating_numerator"]]
+
+# Print the selected rows
+print(selected_rows)
+
+### Insight #3
+- Calculating the maximum retweeted count
+most_retweet = twitter_archive_master['retweet_count'].idxmax()
+
+# Select the rows of interest using the index
+selected_rows = twitter_archive_master.loc[most_liked, ["retweet_count","tweet_id", "expanded_urls", "jpg_url", "rating_numerator"]]
+
+# Print the selected rows
+print(selected_rows)
+## Visualization
+
+### Creating a pie chart showing Percentage of top dog breeds in each column of p1, p2, p3
+# import matpltlib
+import matplotlib.pyplot as plt
+# Set up the plot
+plt.figure(figsize=(5, 5))
+
+# Define the data and labels for the pie chart
+data = [df_percent_p1, df_percent_p2, df_percent_p3]
+labels = ['Golden Retriever', 'Labrador Retriever', 'Labrador Retriever']
+
+# Plot the data
+plt.pie(data, labels=labels, autopct='%1.1f%%')
+
+# Add a title
+plt.title('Percentage of Top Dog Breeds in each Column')
+
+# Show the plot
+plt.show()
+
+# Saving figure as png
+plt.savefig('output.png')
+### Creating a scatter plot for favorite count aganist Rating numerator
+# Extract the favorite count and rating numerator values from the selected rows
+
+
+# Extract the value using indexing
+favorite_count = twitter_archive_master.loc[0:2357,'favorite_count']
+rating_numerator = twitter_archive_master.loc[0:2357,"rating_numerator"]
+
+
+# Set up the plot
+plt.figure(figsize=(10, 5))
+
+# Plot the data as a scatter plot
+plt.scatter(favorite_count, rating_numerator)
+
+# Add a title and axis labels
+plt.title('Favorite Count vs. Rating Numerator')
+plt.xlabel('Favorite Count')
+plt.ylabel('Rating Numerator')
+
+# Show the plot
+plt.show()
+
+# Saving figure as png
+plt.savefig('output.png')
+
+#### There are few outliers in the rating numerator
+- Calculating outliers using IQR method
+- We don't need lower_fence as nothing is in -ve rating and also rating can be low which can range till 0, so calculating lower_fence and exclude less rating might be wrong representation of the data. 
+from scipy import stats
+
+# Extract the column of interest from the dataframe
+column = twitter_archive_master['rating_numerator']
+
+# Calculate the first and third quartiles
+q1, q3 = np.percentile(column, [25, 75])
+
+# Calculate the interquartile range
+iqr = q3 - q1
+
+# Calculate the lower and upper fences
+lower_fence = q1 - 1.5 * iqr
+upper_fence = q3 + 1.5 * iqr
+
+# Identify potential outliers
+outliers = column[(column > upper_fence)]
+
+# Print the identified outliers
+print(list(outliers))
+print(len(outliers))
+
+### Creating scatter plot chart for retweeet count v/s favorite count 
+# Extract the favorite count and rating numerator values from the selected rows
+
+
+# Extract the value using indexing
+retweet_count = twitter_archive_master.loc[0:2357,'retweet_count']
+favorite_count = twitter_archive_master.loc[0:2357,"favorite_count"]
+
+
+# Set up the plot
+plt.figure(figsize=(10, 5))
+
+# Plot the data as a scatter plot
+plt.scatter(retweet_count, favorite_count)
+
+# Add a title and axis labels
+plt.title('Retweet vs. favorite_count')
+plt.xlabel('Retweet Count')
+plt.ylabel('favorite_count')
+
+# Show the plot
+plt.show()
+
+# Saving figure as png
+plt.savefig('output.png')
